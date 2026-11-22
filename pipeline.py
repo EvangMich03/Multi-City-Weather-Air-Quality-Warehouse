@@ -10,13 +10,12 @@ import numpy as np
 import pandas as pd
 
 
-
 logging.basicConfig(
     level=logging.INFO
 )
 dotenv.load_dotenv()
 
-
+INDEX = 0
 cache_session = requests_cache.CachedSession('.cache',expire_after= 3600)
 retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
 openmeteo = openmeteo_requests.Client(session=retry_session)
@@ -43,29 +42,32 @@ VALUES = [
 (4,"Paris",48.85,2.35),
 ]
 curr.executemany(QUERY,VALUES)
-for row in VALUES:
-    logging.info(row)
-    id = row[0]
-    city = row[1]
-    latit = row[2]
-    longi = row[3]
 
 
 
 
+#Fetches longitudes and latitdes dynamically straight from the database. (Might move insertions inside DBeaver exercise was unprecise)
+curr.execute("SELECT LATITUDE FROM LOCATIONS")
+latitudes = [item[0] for item in curr.fetchall()]
+
+curr.execute("SELECT LONGITUTE FROM LOCATIONS")
+longitudes = [item[0] for item in curr.fetchall()]
+
+curr.execute("SELECT CITY_NAME FROM LOCATIONS")
+names = [item[0] for item in curr.fetchall()]
 
 conn.commit()
-conn.close()
 
 url = "https://api.open-meteo.com/v1/forecast"
 params = {
-	"latitude": [52.5244,40.4165,51.5085,41.8919,48.8534],
-	"longitude": [13.4105,-3.7026,-0.1257,12.5113,2.3488],
+	"latitude": latitudes,
+	"longitude": longitudes,
     "hourly": ["temperature_2m","precipitation","wind_speed_10m"]
 }
 responses = openmeteo.weather_api(url,params=params)
 
 for response in responses:
+    
     hourly = response.Hourly()
     hourly_temperature_2m = hourly.Variables(0).ValuesAsNumpy()
     hourly_precipipation = hourly.Variables(1).ValuesAsNumpy()
@@ -84,7 +86,18 @@ for response in responses:
     hourly_data["wind_speed_10m"] = hourly_wind
 
     hourly_dataframe = pd.DataFrame(data = hourly_data)
+    hourly_dataframe['location'] = names[INDEX]
+    logging.info(names[INDEX])
+    hourly_dataframe = hourly_dataframe[["location","date","temperature_2m","precipitation","wind_speed_10m"]]
+    #logging.info(hourly_dataframe)
+    QUERY = "INSERT INTO WEATHER (location_ref,FORECAST_TIME,TEMPAR,PRECIPIPATION,WINDSPEED)" \
+    "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (location_ref,forecast_time) DO UPDATE SET  tempar = excluded.tempar,precipipation=excluded.precipipation,windspeed=excluded.windspeed" 
+
+    VALUES = list(hourly_dataframe.itertuples(index=False,name=None))
+    curr.executemany(QUERY, VALUES)
+    
+    INDEX+=1
 
 
-
-    logging.info("\nHourly data\n", hourly_dataframe)
+conn.commit()
+conn.close()
